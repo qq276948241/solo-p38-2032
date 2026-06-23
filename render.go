@@ -76,12 +76,10 @@ func (g *Game) Render() {
 		screen[pos[1]][pos[0]] = TileGold
 	}
 	for _, m := range g.Monsters {
-		if m.HP > 0 {
-			if m.Boss {
-				screen[m.Y][m.X] = TileBoss
-			} else {
-				screen[m.Y][m.X] = TileMonster
-			}
+		if m.Boss {
+			screen[m.Y][m.X] = TileBoss
+		} else {
+			screen[m.Y][m.X] = TileMonster
 		}
 	}
 	screen[g.Player.Y][g.Player.X] = TilePlayer

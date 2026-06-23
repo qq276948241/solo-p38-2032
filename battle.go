@@ -20,7 +20,7 @@ func (g *Game) MovePlayer(dx, dy int) {
 	}
 
 	for _, m := range g.Monsters {
-		if m.X == nx && m.Y == ny && m.HP > 0 {
+		if m.X == nx && m.Y == ny {
 			g.startBattle(m)
 			return
 		}
@@ -54,6 +54,15 @@ func (g *Game) startBattle(m *Monster) {
 	}
 }
 
+func (g *Game) removeMonster(target *Monster) {
+	for i, m := range g.Monsters {
+		if m == target {
+			g.Monsters = append(g.Monsters[:i], g.Monsters[i+1:]...)
+			return
+		}
+	}
+}
+
 func (g *Game) BattleAttack() {
 	if g.Battle == nil {
 		return
@@ -66,6 +75,7 @@ func (g *Game) BattleAttack() {
 	if m.HP <= 0 {
 		g.Battle.Log = append(g.Battle.Log, fmt.Sprintf("%s 被击败了！获得 %d 金币。", m.Name, m.Gold))
 		g.Player.Gold += m.Gold
+		g.removeMonster(m)
 		if m.Boss {
 			g.Win = true
 			g.GameOver = true

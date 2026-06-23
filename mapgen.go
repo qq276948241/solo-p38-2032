@@ -236,7 +236,7 @@ func (g *Game) hasEntity(x, y int) bool {
 		return true
 	}
 	for _, m := range g.Monsters {
-		if m.X == x && m.Y == y && m.HP > 0 {
+		if m.X == x && m.Y == y {
 			return true
 		}
 	}
