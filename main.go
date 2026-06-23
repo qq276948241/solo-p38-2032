@@ -5,13 +5,16 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 const (
 	MapWidth     = 60
 	MapHeight    = 20
 	MaxFloor     = 5
+	VisionRadius = 5
 	TileWall     = '#'
 	TileFloor    = '.'
 	TilePlayer   = '@'
@@ -46,6 +49,7 @@ type Monster struct {
 
 type Game struct {
 	Map      [][]byte
+	Visited  [][]bool
 	Player   Player
 	Monsters []*Monster
 	Potions  map[[2]int]int
@@ -76,7 +80,31 @@ func init() {
 		cmd.Stdout = os.Stdout
 		cmd.Run()
 	}
+	enableWindowsANSI()
 }
+
+const (
+	stdOutputHandle  = ^uintptr(10) + 1 // (DWORD)-11
+	enableVirtualTerminalProcessing = 0x0004
+)
+
+func enableWindowsANSI() {
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	getConsoleMode := kernel32.NewProc("GetConsoleMode")
+	setConsoleMode := kernel32.NewProc("SetConsoleMode")
+	getStdHandle := kernel32.NewProc("GetStdHandle")
+
+	h, _, _ := getStdHandle.Call(uintptr(stdOutputHandle))
+	var mode uint32
+	getConsoleMode.Call(h, uintptr(unsafe.Pointer(&mode)))
+	mode |= enableVirtualTerminalProcessing
+	setConsoleMode.Call(h, uintptr(mode))
+}
+
+const (
+	csiReset  = "\x1b[0m"
+	csiFgGray = "\x1b[90m"
+)
 
 func ClearScreen() {
 	if f, ok := clear["windows"]; ok {
@@ -100,8 +128,10 @@ func NewPlayer() Player {
 
 func (g *Game) GenerateMap() {
 	g.Map = make([][]byte, MapHeight)
+	g.Visited = make([][]bool, MapHeight)
 	for y := range g.Map {
 		g.Map[y] = make([]byte, MapWidth)
+		g.Visited[y] = make([]bool, MapWidth)
 		for x := range g.Map[y] {
 			g.Map[y][x] = TileWall
 		}
@@ -122,6 +152,27 @@ func (g *Game) GenerateMap() {
 	}
 
 	g.PlaceEntities(rooms)
+	g.UpdateVisibility()
+}
+
+func (g *Game) UpdateVisibility() {
+	px, py := g.Player.X, g.Player.Y
+	for dy := -VisionRadius; dy <= VisionRadius; dy++ {
+		for dx := -VisionRadius; dx <= VisionRadius; dx++ {
+			if dx*dx+dy*dy <= VisionRadius*VisionRadius {
+				nx, ny := px+dx, py+dy
+				if nx >= 0 && nx < MapWidth && ny >= 0 && ny < MapHeight {
+					g.Visited[ny][nx] = true
+				}
+			}
+		}
+	}
+}
+
+func (g *Game) InVision(x, y int) bool {
+	dx := x - g.Player.X
+	dy := y - g.Player.Y
+	return dx*dx+dy*dy <= VisionRadius*VisionRadius
 }
 
 type Room struct {
@@ -363,6 +414,7 @@ func (g *Game) MovePlayer(dx, dy int) {
 	g.Player.X = nx
 	g.Player.Y = ny
 	g.Msg = ""
+	g.UpdateVisibility()
 
 	if heal, ok := g.Potions[[2]int{nx, ny}]; ok {
 		g.Player.HP = min(g.Player.MaxHP, g.Player.HP+heal)
@@ -496,13 +548,52 @@ func (g *Game) Render() {
 	screen[g.Player.Y][g.Player.X] = TilePlayer
 
 	for y := 0; y < MapHeight; y++ {
-		fmt.Println(string(screen[y]))
+		var lineBuf []byte
+		prevGray := false
+		for x := 0; x < MapWidth; x++ {
+			inVis := g.InVision(x, y)
+			visited := g.Visited[y][x]
+
+			var ch byte
+			gray := false
+
+			switch {
+			case inVis:
+				ch = screen[y][x]
+			case visited:
+				ch = screen[y][x]
+				if ch == TileMonster || ch == TileBoss || ch == TilePotion || ch == TileGold {
+					ch = g.Map[y][x]
+				}
+				gray = true
+			default:
+				ch = ' '
+			}
+
+			if gray != prevGray {
+				if gray {
+					lineBuf = append(lineBuf, []byte(csiFgGray)...)
+				} else {
+					lineBuf = append(lineBuf, []byte(csiReset)...)
+				}
+				prevGray = gray
+			}
+			lineBuf = append(lineBuf, ch)
+		}
+		if prevGray {
+			lineBuf = append(lineBuf, []byte(csiReset)...)
+		}
+		fmt.Println(string(lineBuf))
 	}
 
 	statusBar := fmt.Sprintf(" HP:%d/%d | ATK:%d | DEF:%d | 金币:%d | 第 %d/%d 层 ",
 		g.Player.HP, g.Player.MaxHP, g.Player.Atk, g.Player.Def, g.Player.Gold,
 		g.Player.Floor, MaxFloor)
-	fmt.Println("═" + statusBar + "═" + string(make([]byte, max(0, MapWidth-len(statusBar)-2))))
+	padding := MapWidth - len(statusBar) - 2
+	if padding < 0 {
+		padding = 0
+	}
+	fmt.Println("═" + statusBar + "═" + string(make([]byte, padding)))
 	if g.Msg != "" {
 		fmt.Println(g.Msg)
 	} else {
